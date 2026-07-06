@@ -17,15 +17,16 @@ DEFAULTS: dict[str, Any] = {
     "api_key": "default-secret-000",
 }
 
-APP = FastAPI()
+app = FastAPI()
 
-APP.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 def normalize_key(raw_key: str) -> str:
     key = raw_key.strip()
@@ -38,6 +39,7 @@ def normalize_key(raw_key: str) -> str:
 
     return key.lower()
 
+
 def coerce_value(key: str, value: Any) -> Any:
     if key in {"port", "workers"}:
         return int(value)
@@ -49,6 +51,7 @@ def coerce_value(key: str, value: Any) -> Any:
 
     return str(value)
 
+
 def apply_layer(base: dict[str, Any], layer: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for raw_key, raw_value in layer.items():
@@ -56,6 +59,7 @@ def apply_layer(base: dict[str, Any], layer: dict[str, Any]) -> dict[str, Any]:
         if key in DEFAULTS:
             out[key] = coerce_value(key, raw_value)
     return out
+
 
 def load_yaml_layer() -> dict[str, Any]:
     path = Path("config.development.yaml")
@@ -65,6 +69,7 @@ def load_yaml_layer() -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     return data
+
 
 def load_env_file_layer() -> dict[str, Any]:
     path = Path(".env")
@@ -80,6 +85,7 @@ def load_env_file_layer() -> dict[str, Any]:
             out[key] = coerce_value(key, raw_value)
     return out
 
+
 def load_os_env_layer() -> dict[str, Any]:
     out: dict[str, Any] = {}
     for raw_key, raw_value in os.environ.items():
@@ -89,6 +95,7 @@ def load_os_env_layer() -> dict[str, Any]:
         if key in DEFAULTS:
             out[key] = coerce_value(key, raw_value)
     return out
+
 
 def apply_query_overrides(cfg: dict[str, Any], overrides: list[str]) -> dict[str, Any]:
     out = dict(cfg)
@@ -101,7 +108,8 @@ def apply_query_overrides(cfg: dict[str, Any], overrides: list[str]) -> dict[str
             out[key] = coerce_value(key, value_part)
     return out
 
-@APP.get("/effective-config")
+
+@app.get("/effective-config")
 def effective_config(set: list[str] = Query(default_factory=list)) -> dict[str, Any]:
     cfg = dict(DEFAULTS)
     cfg = apply_layer(cfg, load_yaml_layer())
