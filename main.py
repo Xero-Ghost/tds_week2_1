@@ -4,7 +4,7 @@ import uuid
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-EMAIL = "YOUR_LOGIN_EMAIL_HERE"
+EMAIL = "24f3004321@ds.study.iitm.ac.in"
 ALLOWED_ORIGIN = "https://dash-3bg9uz.example.com"
 
 app = FastAPI()
