@@ -1,4 +1,4 @@
 fastapi
 uvicorn[standard]
-PyYAML
-python-dotenv
+PyJWT[crypto]
+pydantic
