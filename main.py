@@ -1,66 +1,108 @@
+from __future__ import annotations
+
 import os
-from collections import defaultdict
-from decimal import Decimal
-from typing import List
+import time
+import uuid
+import json
+import logging
+from collections import deque
+from datetime import datetime, timezone
+from threading import Lock
+from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Request, Query
+from fastapi.responses import JSONResponse, Response, PlainTextResponse
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
 
-API_KEY = "ak_ha2x9m4d0u1rehezohgqrzk1"
 EMAIL = "24f3004321@ds.study.iitm.ac.in"
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+START_TIME = time.monotonic()
+
+# Prometheus counter visible at /metrics
+HTTP_REQUESTS_TOTAL = Counter(
+    "http_requests_total",
+    "Total HTTP requests handled by this service",
+    ["path", "method", "status"],
 )
 
-
-class Event(BaseModel):
-    user: str
-    amount: float
-    ts: int
+# Structured log storage
+LOGS: deque[dict[str, Any]] = deque(maxlen=2000)
+LOG_LOCK = Lock()
 
 
-class AnalyticsRequest(BaseModel):
-    events: List[Event] = Field(default_factory=list)
+def utc_ts() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-@app.post("/analytics")
-def analytics(payload: AnalyticsRequest, x_api_key: str | None = Header(default=None, alias="X-API-Key")):
-    if x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
+def add_log(level: str, path: str, request_id: str, **extra: Any) -> None:
+    entry = {
+        "level": level,
+        "ts": utc_ts(),
+        "path": path,
+        "request_id": request_id,
+        **extra,
+    }
+    with LOG_LOCK:
+        LOGS.append(entry)
+
+
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    start = time.perf_counter()
+    status_code = 500
+
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        duration_ms = round((time.perf_counter() - start) * 1000, 3)
+
+        HTTP_REQUESTS_TOTAL.labels(
+            path=request.url.path,
+            method=request.method,
+            status=str(status_code),
+        ).inc()
+
+        add_log(
+            "info" if status_code < 400 else "error",
+            request.url.path,
+            request_id,
+            method=request.method,
+            status_code=status_code,
+            duration_ms=duration_ms,
         )
 
-    total_events = len(payload.events)
-    unique_users = len({event.user for event in payload.events})
 
-    revenue = Decimal("0")
-    user_totals = defaultdict(lambda: Decimal("0"))
+@app.get("/work")
+async def work(n: int = Query(..., ge=0)):
+    # Simulate real work
+    total = 0
+    for i in range(n):
+        total += i * i
 
-    for event in payload.events:
-        amount = Decimal(str(event.amount))
-        if amount > 0:
-            revenue += amount
-            user_totals[event.user] += amount
+    return {"email": EMAIL, "done": n}
 
-    if user_totals:
-        top_user = max(user_totals.items(), key=lambda item: item[1])[0]
-    else:
-        top_user = ""
 
-    return {
-        "email": EMAIL,
-        "total_events": total_events,
-        "unique_users": unique_users,
-        "revenue": float(revenue),
-        "top_user": top_user,
-    }
+@app.get("/metrics")
+async def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/healthz")
+async def healthz():
+    uptime_s = time.monotonic() - START_TIME
+    return {"status": "ok", "uptime_s": float(uptime_s)}
+
+
+@app.get("/logs/tail")
+async def logs_tail(limit: int = Query(10, ge=1, le=200)):
+    with LOG_LOCK:
+        tail = list(LOGS)[-limit:]
+    return JSONResponse(tail)
