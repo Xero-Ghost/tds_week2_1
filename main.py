@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 API_KEY = "ak_ha2x9m4d0u1rehezohgqrzk1"
-EMAIL = os.getenv("24f3004321@ds.study.iitm.ac.in", "your_email_here")
+EMAIL = "24f3004321@ds.study.iitm.ac.in"
 
 app = FastAPI()
 
