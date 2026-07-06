@@ -1,62 +1,66 @@
-# main.py
-from datetime import datetime, timezone
-from typing import Optional
+import os
+from collections import defaultdict
+from decimal import Decimal
+from typing import List
 
-import jwt
-from jwt import InvalidTokenError
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+
+API_KEY = "ak_ha2x9m4d0u1rehezohgqrzk1"
+EMAIL = os.getenv("24f3004321@ds.study.iitm.ac.in", "your_email_here")
 
 app = FastAPI()
 
-ISSUER = "https://idp.exam.local"
-AUDIENCE = "tds-gj0ocjgl.apps.exam.local"
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2okOHspNjgA+2rTLbeuY
-cxiP/hG8C6Sb9iwg3yiLAA4HCnpITcbWCSelbvbYGuc3EbNy4xFyf5Cbj5DHJMID
-EkryOgyd2giIIIBOUBj8S63uGcnRpOBh9NFatfNwheKuzsPuVNldu6A9cNteNpXc
-WyJjG2axVfmq7i6SuKr1JoWYG7xTTAvKPujSl4OtsQfO3h5NepzdfXpr28oNnzfW
-ed+zclR6BcmNNo/WVfJ4xyCLSf0BCOgdTgW6PdaChd1l9VDetJZVEgC5tkyvXsfI
-SI6iyrYbKR0NEBSqq4XkadEjsCs4F1RncsS4LlgniT7GlkL9Mce3b0wGLs9/7ZIX
-dQIDAQAB
------END PUBLIC KEY-----"""
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-class VerifyRequest(BaseModel):
-    token: str
+class Event(BaseModel):
+    user: str
+    amount: float
+    ts: int
 
 
-@app.get("/")
-def health():
-    return {"ok": True}
+class AnalyticsRequest(BaseModel):
+    events: List[Event] = Field(default_factory=list)
 
 
-@app.post("/verify")
-def verify_token(payload: VerifyRequest):
-    try:
-        claims = jwt.decode(
-            payload.token,
-            PUBLIC_KEY,
-            algorithms=["RS256"],
-            audience=AUDIENCE,
-            issuer=ISSUER,
-            options={
-                "require": ["exp", "iss", "aud", "sub"],
-            },
+@app.post("/analytics")
+def analytics(payload: AnalyticsRequest, x_api_key: str | None = Header(default=None, alias="X-API-Key")):
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
         )
 
-        email = claims.get("email")
-        sub = claims.get("sub")
-        aud = claims.get("aud")
+    total_events = len(payload.events)
+    unique_users = len({event.user for event in payload.events})
 
-        return {
-            "valid": True,
-            "email": email,
-            "sub": sub,
-            "aud": aud,
-        }
+    revenue = Decimal("0")
+    user_totals = defaultdict(lambda: Decimal("0"))
 
-    except InvalidTokenError:
-        raise HTTPException(status_code=401, detail={"valid": False})
-    except Exception:
-        raise HTTPException(status_code=401, detail={"valid": False})
+    for event in payload.events:
+        amount = Decimal(str(event.amount))
+        if amount > 0:
+            revenue += amount
+            user_totals[event.user] += amount
+
+    if user_totals:
+        top_user = max(user_totals.items(), key=lambda item: item[1])[0]
+    else:
+        top_user = ""
+
+    return {
+        "email": EMAIL,
+        "total_events": total_events,
+        "unique_users": unique_users,
+        "revenue": float(revenue),
+        "top_user": top_user,
+    }
